@@ -1,0 +1,85 @@
+from rich.console import Console
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+import requests
+import socket
+import ssl
+import whois
+import dns.resolver
+from datetime import datetime
+import urllib.parse
+import time
+import concurrent.futures
+import os
+
+console = Console()def clean_screen():    os.system('cls' if os.name == 'nt' else 'clear')def clean_url(url):    url = url.strip().lower()    if not url.startswith(('http://', 'https://')):        url = 'https://' + url
+    return url
+
+def get_domain(url):    parsed = urllib.parse.urlparse(url)    return parsed.netloc
+
+def get_ssl_info(url):    try:
+        port = 443
+        context = ssl.create_default_context()        with socket.create_connection((url, port)) as sock:
+            with context.wrap_socket(sock, server_hostname=url) as ssock:
+                ssl_info = ssock.getpeercert()                valid_from = ssl_info['notBefore']                valid_until = ssl_info['notAfter']                return valid_from, valid_until
+    except Exception as e:
+        return"Not Available","Not Available"def get_http_status(url):    try:
+        response = requests.get(url)        return response.status_code
+    except Exception:
+        return"Not Available"def get_security_headers(headers):    security_headers = {
+        'Strict-Transport-Security': 'HSTS',
+        'Content-Security-Policy': 'CSP',
+        'X-Frame-Options': 'X-Frame',
+        'X-Content-Type-Options': 'X-Content-Type',
+        'X-XSS-Protection': 'XSS Protection',
+        'Referrer-Policy': 'Referrer Policy',
+        'Feature-Policy': 'Feature Policy'} return {new_name: headers.get(header, 'Not Available') 
+            for header, new_name in security_headers.items()}def check_admin_panel(url, timeout=3):    admin_paths = ['/admin', '/administrator', '/wp-admin', '/login', 
+                   '/panel', '/admin.php', '/admin/login', '/cp']    found_paths = []    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        def check_path(path):            try:
+                test_url = url.rstrip('/') + path
+                response = requests.get(test_url, timeout=timeout, allow_redirects=False)                if response.status_code in [200, 301, 302, 403]:                    return test_url
+            except:
+                pass
+            return None
+        
+        futures = [executor.submit(check_path, path) for path in admin_paths]        for future in concurrent.futures.as_completed(futures):            if future.result():                found_paths.append(future.result())    
+    return found_paths
+
+def grab_banner(url, timeout=5):    try:
+        response = requests.get(url, timeout=timeout)        server = response.headers.get('Server', 'Not Available')        x_powered_by = response.headers.get('X-Powered-By', 'Not Available')        return server, x_powered_by
+    except Exception as e:
+        return f'Error: {str(e)}', 'Not Available'
+
+def get_technologies(url):    # Placeholder for technology analysis
+    return"Analysis not implemented"def get_server_location(url):    try:
+        response = requests.get(url)        server_ip = response.raw._connection.sock.getpeername()[0]        location = requests.get(f"https://ipinfo.io/{server_ip}/json").json()        return location.get("city","Not Available"), location.get("country","Not Available")    except:
+        return"Not Available","Not Available"def create_styled_table(title, data):    table = Table(title=title, show_header=True)    headers = ["Category","Details"]    for header in headers:
+        table.add_column(header)    for row in data:
+        table.add_row(row[0], row[1])    return table
+
+def scan_website(url):    url = clean_url(url)    ssl_valid_from, ssl_valid_until = get_ssl_info(url)    http_status = get_http_status(url)    admin_panel = check_admin_panel(url)    server, x_powered_by = grab_banner(url)    
+    results = [
+        ("IP Address","Not Available"),  # Placeholder for IP Address
+        ("Network Info","Not Available"),  # Placeholder for Network Info
+        ("SSL Valid From", format_date(ssl_valid_from)),        ("SSL Valid Until", format_date(ssl_valid_until)),        ("HTTP Status", http_status),        ("HSTS","Not Available"),  # Placeholder for HSTS
+        ("CSP","Not Available"),  # Placeholder for CSP
+        ("X-Frame","Not Available"),  # Placeholder for X-Frame
+        ("X-Content-Type","Not Available"),  # Placeholder for X-Content-Type
+        ("XSS Protection","Not Available"),  # Placeholder for XSS Protection
+        ("Referrer Policy","Not Available"),  # Placeholder for Referrer Policy
+        ("Feature Policy","Not Available"),  # Placeholder for Feature Policy
+        ("Admin Panel", ', '.join(admin_panel) if admin_panel else"Not Found"),        ("Server", server),        ("X-Powered-By", x_powered_by),        ("Technologies", get_technologies(url)),        ("Server Location", f"{get_server_location(url)[0]}, {get_server_location(url)[1]}")    ]
+    
+    return results
+
+def format_date(date_str):    if not date_str or date_str =="Not Available":        return"Not Available"    try:
+        date_obj = datetime.strptime(date_str,"%b %d %H:%M:%S %Y GMT")        return date_obj.strftime("%d %B %Y")    except Exception:
+        return str(date_str)def scan_websites(file_path):    with open(file_path, 'r') as file:
+        websites = file.readlines()    
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TimeElapsedColumn()) as progress:
+        task = progress.add_task("[cyan]Scanning websites...", total=len(websites))        for url in websites:
+            url = clean_url(url)            try:
+                result = scan_website(url)                console.print(create_styled_table(f"Scan Results for {url}", result))            except Exception as e:
+                console.print(f"[red]Error scanning {url}: {e}")            progress.update(task, advance=1)if __name__ == "__main__":    file_path = input("\033[1;35mEnter the file path containing websites: ")    
